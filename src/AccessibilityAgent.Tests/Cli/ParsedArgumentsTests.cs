@@ -2,7 +2,7 @@ using System;
 using AccessibilityAgent.Cli;
 using Xunit;
 
-namespace AccessibilityAgent.Tests;
+namespace AccessibilityAgent.Tests.Cli;
 
 public sealed class ParsedArgumentsTests
 {

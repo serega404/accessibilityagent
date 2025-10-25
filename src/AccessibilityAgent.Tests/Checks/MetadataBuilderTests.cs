@@ -1,7 +1,7 @@
 using AccessibilityAgent.Checks;
 using Xunit;
 
-namespace AccessibilityAgent.Tests;
+namespace AccessibilityAgent.Tests.Checks;
 
 public sealed class MetadataBuilderTests
 {
