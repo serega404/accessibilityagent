@@ -95,6 +95,7 @@ accessibilityagent <command> [options]
 - udp    HOST PORT [--payload TEXT] [--expect-response] [--timeout MS] [--format json]
 - http   URL [--method VERB] [--timeout MS] [--header key=value] [--body TEXT] [--format json]
 - check  HOST [protocol-specific options] [--format json]
+- agent  [--server URL] [--token VALUE] [--name NAME] [...options]
 
 Глобальная справка:
 
@@ -270,6 +271,127 @@ accessibilityagent check example.com --tcp-port 80 --http --format json
 - ICMP (ping) на Linux без привилегий может завершаться сообщением вида "operation not permitted". Это ожидаемо. Для пинга без `sudo` в бинарник можно добавить capability `cap_net_raw` (см. выше) или запускать контейнер с `--cap-add=NET_RAW`.
 - Межсетевые экраны и NAT могут влиять на UDP: отсутствие ответа не равно недоступности сервиса.
 - Резолвинг DNS и HTTP‑запросы зависят от настроек прокси/сети окружения. Тайм‑ауты можно увеличивать опциями.
+
+## Режим агента (agent)
+
+Агент — это длительно живущий процесс, который подключается к координатору по Socket.IO и принимает задания на выполнение проверок удалённо. Подходит для распределённого мониторинга из разных сетевых зон.
+
+- Транспорт: Socket.IO (WebSocket, путь `/socket.io`, совместимость с Engine.IO v3)
+- Аутентификация: токен в query/auth (`token`) и имя агента (`agent`)
+- Поддерживаемые типы заданий: `ping`, `dns`, `tcp`, `udp`, `http`, `check` (составная)
+- Одновременное выполнение: агент обрабатывает только одно задание за раз; внутри составного задания проверки выполняются параллельно
+
+### Как запустить
+
+```bash
+# Минимальный запуск (переменные окружения)
+export AA_SERVER_URL="http://localhost:8080"    # URL координатора Socket.IO
+export AA_AGENT_TOKEN="devtoken"                # общий токен доступа
+accessibilityagent agent                         # имя возьмётся из имени хоста
+
+# Явно через флаги с метаданными
+accessibilityagent agent \
+  --server http://localhost:8080 \
+  --token devtoken \
+  --name agent-1 \
+  --heartbeat 30000 \
+  --metadata env=prod --metadata region=ru-msk-1
+```
+
+Остановка — Ctrl+C. Коды возврата: 0 при штатном завершении/отмене, 1 при ошибке запуска, 2 — для непредвиденных исключений.
+
+### Опции и переменные окружения
+
+- `--server <url>` или `AA_SERVER_URL` — адрес координатора Socket.IO (обязательно)
+- `--token <value>` или `AA_AGENT_TOKEN` — токен доступа (обязательно)
+- `--name <value>` или `AA_AGENT_NAME` — имя агента (по умолчанию имя машины)
+- `--reconnect-delay <ms>` — стартовая задержка реконнекта, по умолчанию 2000
+- `--reconnect-delay-max <ms>` — максимальная задержка реконнекта, по умолчанию 30000
+- `--reconnect-attempts <n>` — ограничение числа попыток (по умолчанию без лимита)
+- `--heartbeat <ms>` — интервал heartbeat (0 — выключить), по умолчанию 30000
+- `--metadata key=value` — дополнительные метаданные (можно повторять)
+
+### Протокол взаимодействия с координатором
+
+События Socket.IO, которыми обменивается агент:
+
+- `agent:register` (исходящее от агента) — регистрация
+  - payload: `{ agent: string, version?: string, capabilities: string[], metadata?: object|null, runtime?: object }`
+  - capabilities у .NET‑агента: `["ping","dns","tcp","udp","http","check"]`
+
+- `agent:heartbeat` (исходящее) — пульс каждые `--heartbeat` мс
+  - payload: `{ agent: string, timestamp: ISO, uptimeSeconds: number }`
+
+- `job:request` (входящее) — координатор присылает задание
+  - payload: `{ id: string, type: string, payload?: object|null, metadata?: object|null }`
+
+- `job:accepted` (исходящее) — агент принял задание
+  - payload: `{ jobId: string, agent: string, type: string, receivedAt: ISO, metadata?: object|null }`
+
+- `job:result` (исходящее) — результат выполнения
+  - payload: `{ jobId: string, agent: string, success: boolean, error?: string, errorDetails?: string, completedAt: ISO, checks: CheckResult[], metadata?: object|null }`
+  - `CheckResult` соответствует схеме JSON‑вывода утилиты: `{ check, success, message, durationMs?, data? }`
+
+Примечания реализации:
+
+- Агент использует query‑параметры `token` и `agent` при подключении. Также совместим с `handshake.auth`.
+- При потере связи включается авто‑реконнект с нарастающей задержкой в пределах `--reconnect-delay --reconnect-delay-max`.
+- Если `--heartbeat 0`, heartbeat не отправляется.
+- Агент обрабатывает задания последовательно (очередь по одному), но внутри `check` все выбранные подпроверки запускаются параллельно.
+
+### Типы заданий и формат payload
+
+Во всех случаях корень запроса выглядит так:
+
+```json
+{
+  "id": "job-123",
+  "type": "<ping|dns|tcp|udp|http|check>",
+  "payload": { /* параметры задания, см. ниже */ },
+  "metadata": { "any": "data" }
+}
+```
+
+- ping
+  - payload: `{ "host": string, "timeoutMs"?: number }`
+
+- dns
+  - payload: `{ "host": string, "timeoutMs"?: number }`
+
+- tcp
+  - payload: `{ "host": string, "port": number (1..65535), "timeoutMs"?: number }`
+
+- udp
+  - payload: `{ "host": string, "port": number, "payload"?: string, "expectResponse"?: boolean, "timeoutMs"?: number }`
+
+- http
+  - payload: `{ "url": string, "method"?: string (по умолчанию GET), "timeoutMs"?: number, "body"?: string, "contentType"?: string, "headers"?: string[] | Record<string,string> }`
+  - Заголовки допускаются в формах `key=value`, `key:value`, а также объектом `{key: value}`.
+
+- check (составная)
+  - обязательные: `host: string`
+  - общие: `timeoutMs?`
+  - опции:
+    - `skipPing?`, `skipDns?`
+    - `tcpPorts?: number|number[]`, `tcpTimeoutMs?`
+    - `udpPorts?: number|number[]`, `udpPayload?: string`, `udpExpectResponse?: boolean`, `udpTimeoutMs?`
+    - HTTP: либо `httpUrls?: string[]`, либо флажки `http?: boolean`, `https?: boolean` с конструкцией URL из `host`
+      - дополнительные: `httpPorts?: number|number[]`, `httpPath?: string` (по умолчанию `/`), `httpMethod?`, `httpTimeoutMs?`, `httpBody?`, `httpContentType?`, `httpHeaders?: string[] | Record<string,string>`
+
+Успех всего задания определяется по конъюнкции результатов подпроверок (`success=true` только если все подпроверки успешны). Если в `check` не выбраны никакие подпроверки, возвращается пустой массив `checks: []` и `success=true`.
+
+Ошибки валидации входных параметров (например, порт вне диапазона) приводят к `success=false` и заполненным полям `error`, `errorDetails` в `job:result`.
+
+### Безопасность и права
+
+- Настройте секретный токен координатора и передавайте его агенту (переменная `AA_AGENT_TOKEN` / флаг `--token`).
+- Для ICMP‑пингов без root на Linux добавьте capability `cap_net_raw` бинарю или запускайте контейнер с `--cap-add=NET_RAW`.
+- Агент не исполняет произвольные команды — только предопределённые сетевые проверки выше.
+
+### Диагностика
+
+- Агент пишет логи в stdout/stderr с временными метками.
+- При обрывах соединения предпринимаются автоматические попытки переподключения; интервалы регулируются флагами реконнекта.
 
 ## Разработка
 
