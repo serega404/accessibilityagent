@@ -1,3 +1,4 @@
+using AccessibilityAgent.Agent;
 using AccessibilityAgent.Checks;
 using AccessibilityAgent.Output;
 
@@ -27,11 +28,6 @@ namespace AccessibilityAgent.Cli;
 /// </example>
 internal static class CommandDispatcher
 {
-    private const int DefaultPingTimeoutMs = 4_000;
-    private const int DefaultDnsTimeoutMs = 4_000;
-    private const int DefaultTcpTimeoutMs = 3_000;
-    private const int DefaultUdpTimeoutMs = 2_000;
-    private const int DefaultHttpTimeoutMs = 5_000;
 
     public static async Task<int> RunAsync(string[] args)
     {
@@ -116,7 +112,7 @@ internal static class CommandDispatcher
         }
 
         var host = RequireOption(parsed, ["host", "h"], "Host is required for ping checks.");
-        var timeout = parsed.TryGetIntOption(["timeout"], minValue: 1) ?? DefaultPingTimeoutMs;
+    var timeout = parsed.TryGetIntOption(["timeout"], minValue: 1) ?? CheckDefaults.PingTimeoutMs;
         var result = await NetworkChecks.PingAsync(host, timeout);
 
         var format = ResultWriter.DetermineFormat(parsed);
@@ -134,7 +130,7 @@ internal static class CommandDispatcher
         }
 
         var host = RequireOption(parsed, ["host", "h"], "Host name is required for DNS checks.");
-        var timeout = parsed.TryGetIntOption(["timeout"], minValue: 1) ?? DefaultDnsTimeoutMs;
+    var timeout = parsed.TryGetIntOption(["timeout"], minValue: 1) ?? CheckDefaults.DnsTimeoutMs;
         var result = await NetworkChecks.DnsAsync(host, timeout);
 
         var format = ResultWriter.DetermineFormat(parsed);
@@ -153,7 +149,7 @@ internal static class CommandDispatcher
 
         var host = RequireOption(parsed, ["host", "h"], "Host is required for TCP checks.");
         var port = parsed.RequireIntOption(["port", "p"], minValue: 1, maxValue: 65_535);
-        var timeout = parsed.TryGetIntOption(["timeout"], minValue: 1) ?? DefaultTcpTimeoutMs;
+    var timeout = parsed.TryGetIntOption(["timeout"], minValue: 1) ?? CheckDefaults.TcpTimeoutMs;
         var result = await NetworkChecks.TcpAsync(host, port, timeout);
 
         var format = ResultWriter.DetermineFormat(parsed);
@@ -172,7 +168,7 @@ internal static class CommandDispatcher
 
         var host = RequireOption(parsed, ["host", "h"], "Host is required for UDP checks.");
         var port = parsed.RequireIntOption(["port", "p"], minValue: 1, maxValue: 65_535);
-        var timeout = parsed.TryGetIntOption(["timeout"], minValue: 1) ?? DefaultUdpTimeoutMs;
+    var timeout = parsed.TryGetIntOption(["timeout"], minValue: 1) ?? CheckDefaults.UdpTimeoutMs;
         var payload = parsed.GetOption(["payload"]) ?? string.Empty;
         var expectResponse = parsed.HasFlag(["expect-response", "expectresponse"]);
         var result = await NetworkChecks.UdpAsync(host, port, payload, timeout, expectResponse);
@@ -198,7 +194,7 @@ internal static class CommandDispatcher
         }
 
         var method = parsed.GetOption(["method", "m"]) ?? "GET";
-        var timeout = parsed.TryGetIntOption(["timeout"], minValue: 1) ?? DefaultHttpTimeoutMs;
+    var timeout = parsed.TryGetIntOption(["timeout"], minValue: 1) ?? CheckDefaults.HttpTimeoutMs;
         var body = parsed.GetOption(["body", "data"]);
         var contentType = parsed.GetOption(["content-type", "contenttype"]) ?? "text/plain";
         var headerValues = parsed.GetOptionValues(["header", "H"]);
@@ -226,14 +222,14 @@ internal static class CommandDispatcher
 
         if (!parsed.HasFlag(["skip-ping", "no-ping", "skip_ping"]))
         {
-            var timeout = parsed.TryGetIntOption(["ping-timeout"], minValue: 1) ?? overallTimeout ?? DefaultPingTimeoutMs;
+            var timeout = parsed.TryGetIntOption(["ping-timeout"], minValue: 1) ?? overallTimeout ?? CheckDefaults.PingTimeoutMs;
             checkTasks.Add(NetworkChecks.PingAsync(host, timeout));
         }
 
         if (!parsed.HasFlag(["skip-dns", "no-dns", "skip_dns"]))
         {
             var dnsHost = parsed.GetOption(["dns-host"]) ?? host;
-            var timeout = parsed.TryGetIntOption(["dns-timeout"], minValue: 1) ?? overallTimeout ?? DefaultDnsTimeoutMs;
+            var timeout = parsed.TryGetIntOption(["dns-timeout"], minValue: 1) ?? overallTimeout ?? CheckDefaults.DnsTimeoutMs;
             checkTasks.Add(NetworkChecks.DnsAsync(dnsHost, timeout));
         }
 
@@ -244,7 +240,7 @@ internal static class CommandDispatcher
                 throw new ArgumentException($"Invalid TCP port '{portToken}'.");
             }
 
-            var timeout = parsed.TryGetIntOption(["tcp-timeout"], minValue: 1) ?? overallTimeout ?? DefaultTcpTimeoutMs;
+            var timeout = parsed.TryGetIntOption(["tcp-timeout"], minValue: 1) ?? overallTimeout ?? CheckDefaults.TcpTimeoutMs;
             checkTasks.Add(NetworkChecks.TcpAsync(host, port, timeout));
         }
 
@@ -257,13 +253,13 @@ internal static class CommandDispatcher
                 throw new ArgumentException($"Invalid UDP port '{portToken}'.");
             }
 
-            var timeout = parsed.TryGetIntOption(["udp-timeout"], minValue: 1) ?? overallTimeout ?? DefaultUdpTimeoutMs;
+            var timeout = parsed.TryGetIntOption(["udp-timeout"], minValue: 1) ?? overallTimeout ?? CheckDefaults.UdpTimeoutMs;
             checkTasks.Add(NetworkChecks.UdpAsync(host, port, udpPayload ?? string.Empty, timeout, udpExpectResponse));
         }
 
         var httpUrls = parsed.GetOptionValues(["http-url"]).ToList();
         var httpMethod = parsed.GetOption(["http-method"]) ?? parsed.GetOption(["method"]) ?? "GET";
-        var httpTimeout = parsed.TryGetIntOption(["http-timeout"], minValue: 1) ?? overallTimeout ?? DefaultHttpTimeoutMs;
+    var httpTimeout = parsed.TryGetIntOption(["http-timeout"], minValue: 1) ?? overallTimeout ?? CheckDefaults.HttpTimeoutMs;
         var httpBody = parsed.GetOption(["http-body", "body"]);
         var httpContentType = parsed.GetOption(["http-content-type", "content-type"]) ?? "text/plain";
         var httpHeaders = parsed.GetOptionValues(["http-header", "header"]);
