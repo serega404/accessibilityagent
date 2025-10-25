@@ -44,11 +44,15 @@ jobs:
 
   build-binaries:
     needs: tests
-    runs-on: ubuntu-latest
     name: Build binaries (${{ matrix.rid }})
     strategy:
       matrix:
-        rid: [linux-x64, win-x64]
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: windows-latest
+            rid: win-x64
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -57,6 +61,12 @@ jobs:
         uses: actions/setup-dotnet@v3
         with:
           dotnet-version: '9.0.x'
+
+      - name: Install NativeAOT toolchain (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld build-essential zlib1g-dev
 
       - name: Restore dependencies
         run: |
@@ -77,19 +87,13 @@ jobs:
             -p:PublishSingleFile=true \
             -p:IncludeNativeLibrariesForSelfExtract=true \
             -p:EnableCompressionInSingleFile=true \
-            -p:PublishTrimmed=false \
             -o "./publish/${{ matrix.rid }}"
 
-      - name: Archive binaries
-        run: |
-          cd ${{ env.CONTEXT }}/publish &&
-          zip -r "../artifact-${{ matrix.rid }}.zip" "${{ matrix.rid }}"
-
       - name: Upload artifact ${{ matrix.rid }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
         with:
           name: accessibilityagent-${{ matrix.rid }}
-          path: ${{ env.CONTEXT }}/artifact-${{ matrix.rid }}.zip
+          path: ${{ env.CONTEXT }}/publish/${{ matrix.rid }}
           if-no-files-found: error
 
   build-and-push-image:
