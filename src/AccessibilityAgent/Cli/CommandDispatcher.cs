@@ -220,21 +220,21 @@ internal static class CommandDispatcher
 
         var host = RequireOption(parsed, ["host", "h"], "Host is required for composite checks.");
         var format = ResultWriter.DetermineFormat(parsed);
-        var results = new List<CheckResult>();
+        var checkTasks = new List<Task<CheckResult>>();
 
         var overallTimeout = parsed.TryGetIntOption(["timeout"], minValue: 1);
 
         if (!parsed.HasFlag(["skip-ping", "no-ping", "skip_ping"]))
         {
             var timeout = parsed.TryGetIntOption(["ping-timeout"], minValue: 1) ?? overallTimeout ?? DefaultPingTimeoutMs;
-            results.Add(await NetworkChecks.PingAsync(host, timeout));
+            checkTasks.Add(NetworkChecks.PingAsync(host, timeout));
         }
 
         if (!parsed.HasFlag(["skip-dns", "no-dns", "skip_dns"]))
         {
             var dnsHost = parsed.GetOption(["dns-host"]) ?? host;
             var timeout = parsed.TryGetIntOption(["dns-timeout"], minValue: 1) ?? overallTimeout ?? DefaultDnsTimeoutMs;
-            results.Add(await NetworkChecks.DnsAsync(dnsHost, timeout));
+            checkTasks.Add(NetworkChecks.DnsAsync(dnsHost, timeout));
         }
 
         foreach (var portToken in parsed.GetOptionValues(["tcp-port", "tcp"]))
@@ -245,7 +245,7 @@ internal static class CommandDispatcher
             }
 
             var timeout = parsed.TryGetIntOption(["tcp-timeout"], minValue: 1) ?? overallTimeout ?? DefaultTcpTimeoutMs;
-            results.Add(await NetworkChecks.TcpAsync(host, port, timeout));
+            checkTasks.Add(NetworkChecks.TcpAsync(host, port, timeout));
         }
 
         var udpPayload = parsed.GetOption(["udp-payload"]);
@@ -258,7 +258,7 @@ internal static class CommandDispatcher
             }
 
             var timeout = parsed.TryGetIntOption(["udp-timeout"], minValue: 1) ?? overallTimeout ?? DefaultUdpTimeoutMs;
-            results.Add(await NetworkChecks.UdpAsync(host, port, udpPayload ?? string.Empty, timeout, udpExpectResponse));
+            checkTasks.Add(NetworkChecks.UdpAsync(host, port, udpPayload ?? string.Empty, timeout, udpExpectResponse));
         }
 
         var httpUrls = parsed.GetOptionValues(["http-url"]).ToList();
@@ -308,8 +308,13 @@ internal static class CommandDispatcher
                 throw new ArgumentException($"Invalid HTTP URL '{urlToken}'.");
             }
 
-            results.Add(await NetworkChecks.HttpAsync(uri, httpMethod, httpTimeout, httpBody, httpContentType, httpHeaders));
+            checkTasks.Add(NetworkChecks.HttpAsync(uri, httpMethod, httpTimeout, httpBody, httpContentType, httpHeaders));
         }
+
+        // Выполняем все запрошенные проверки одновременно, сохраняя предсказуемый порядок вывода.
+        var results = checkTasks.Count == 0
+            ? Array.Empty<CheckResult>()
+            : await Task.WhenAll(checkTasks);
 
         ResultWriter.Write(results, format, includeSummary: true);
         return results.All(r => r.Success) ? 0 : 1;
