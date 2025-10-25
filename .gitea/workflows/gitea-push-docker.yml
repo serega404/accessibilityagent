@@ -27,15 +27,18 @@ jobs:
         with:
           dotnet-version: '9.0.x'
 
-      - name: Cache NuGet packages
-        uses: actions/cache@v4
+      - name: Restore NuGet cache (retry)
+        uses: Wandalen/wretry.action@v3
         with:
-          path: |
-            ~/.nuget/packages
-            **/obj/project.assets.json
-          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
-          restore-keys: |
-            nuget-${{ runner.os }}-
+          action: actions/cache/restore@v4
+          with: |
+            path: |
+              ~/.nuget/packages
+            key: nuget-${{ runner.os }}-${{ hashFiles('**/*.sln', '**/*.csproj', '**/packages.lock.json') }}
+            restore-keys: |
+              nuget-${{ runner.os }}-
+          attempt_limit: 3
+          attempt_delay: 15000
 
       - name: Restore dependencies
         run: |
@@ -51,6 +54,14 @@ jobs:
         run: |
           cd ${{ env.CONTEXT }} &&
           dotnet test AccessibilityAgent.sln --no-build --configuration Release --verbosity minimal
+
+      - name: Save NuGet cache
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.sln', '**/*.csproj', '**/packages.lock.json') }}
 
   build-binaries:
     needs: tests
@@ -68,20 +79,23 @@ jobs:
         with:
           dotnet-version: '9.0.x'
 
-      - name: Cache NuGet packages
-        uses: actions/cache@v4
+      - name: Restore NuGet cache (retry)
+        uses: Wandalen/wretry.action@v3
         with:
-          path: |
-            ~/.nuget/packages
-            **/obj/project.assets.json
-          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
-          restore-keys: |
-            nuget-${{ runner.os }}-
+          action: actions/cache/restore@v4
+          with: |
+            path: |
+              ~/.nuget/packages
+            key: nuget-${{ runner.os }}-${{ hashFiles('**/*.sln', '**/*.csproj', '**/packages.lock.json') }}
+            restore-keys: |
+              nuget-${{ runner.os }}-
+          attempt_limit: 3
+          attempt_delay: 15000
 
       - name: Restore dependencies
         run: |
           cd ${{ env.CONTEXT }} &&
-          dotnet restore AccessibilityAgent.sln
+          dotnet restore AccessibilityAgent/AccessibilityAgent.csproj -r ${{ matrix.rid }}
 
       - name: Build
         run: |
@@ -91,10 +105,13 @@ jobs:
       - name: Publish ${{ matrix.rid }}
         run: |
           cd ${{ env.CONTEXT }} &&
-          dotnet publish AccessibilityAgent.sln \
+          dotnet publish AccessibilityAgent/AccessibilityAgent.csproj \
             --no-restore --configuration Release \
-            -r ${{ matrix.rid }} --self-contained false \
-            -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true \
+            -r ${{ matrix.rid }} --self-contained true \
+            -p:PublishSingleFile=true \
+            -p:IncludeNativeLibrariesForSelfExtract=true \
+            -p:EnableCompressionInSingleFile=true \
+            -p:PublishTrimmed=false \
             -o "./publish/${{ matrix.rid }}"
 
       - name: Archive binaries
@@ -103,11 +120,12 @@ jobs:
           zip -r "../artifact-${{ matrix.rid }}.zip" "${{ matrix.rid }}"
 
       - name: Upload artifact ${{ matrix.rid }}
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: accessibilityagent-${{ matrix.rid }}
           path: ${{ env.CONTEXT }}/artifact-${{ matrix.rid }}.zip
           if-no-files-found: error
+
   build-and-push-image:
     needs: tests
     runs-on: ubuntu-latest
@@ -115,7 +133,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -125,15 +142,18 @@ jobs:
         with:
           dotnet-version: '9.0.x'
 
-      - name: Cache NuGet packages
-        uses: actions/cache@v4
+      - name: Restore NuGet cache (retry)
+        uses: Wandalen/wretry.action@v3
         with:
-          path: |
-            ~/.nuget/packages
-            **/obj/project.assets.json
-          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
-          restore-keys: |
-            nuget-${{ runner.os }}-
+          action: actions/cache/restore@v4
+          with: |
+            path: |
+              ~/.nuget/packages
+            key: nuget-${{ runner.os }}-${{ hashFiles('**/*.sln', '**/*.csproj', '**/packages.lock.json') }}
+            restore-keys: |
+              nuget-${{ runner.os }}-
+          attempt_limit: 3
+          attempt_delay: 15000
 
       - name: Restore dependencies
         run: |
