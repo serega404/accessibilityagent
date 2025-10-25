@@ -51,6 +51,7 @@ internal static class CommandDispatcher
                 "udp" => await HandleUdpAsync(commandArgs),
                 "http" => await HandleHttpAsync(commandArgs),
                 "check" => await HandleCompositeAsync(commandArgs),
+                "agent" => await HandleAgentAsync(commandArgs),
                 _ => HandleUnknownCommand(command)
             };
         }
@@ -388,5 +389,125 @@ internal static class CommandDispatcher
         Console.WriteLine("  --http-header key=value     Additional HTTP headers");
         Console.WriteLine("  --http-body <text>          Optional HTTP request body");
         Console.WriteLine("  --format json               Emit JSON output");
+    }
+
+    private static async Task<int> HandleAgentAsync(string[] args)
+    {
+        var parsed = ParsedArguments.Parse(args);
+        if (parsed.IsHelpRequested)
+        {
+            PrintAgentUsage();
+            return 0;
+        }
+
+        var serverUrl = parsed.GetOption(["server", "url", "s"]) ?? Environment.GetEnvironmentVariable("AA_SERVER_URL");
+        if (string.IsNullOrWhiteSpace(serverUrl))
+        {
+            throw new ArgumentException("Agent mode requires --server option or AA_SERVER_URL environment variable.");
+        }
+
+        if (!Uri.TryCreate(serverUrl, UriKind.Absolute, out var serverUri))
+        {
+            throw new ArgumentException($"Invalid server URL '{serverUrl}'.");
+        }
+
+        var token = parsed.GetOption(["token", "t"]) ?? Environment.GetEnvironmentVariable("AA_AGENT_TOKEN");
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            throw new ArgumentException("Agent mode requires --token option or AA_AGENT_TOKEN environment variable.");
+        }
+
+        var name = parsed.GetOption(["name", "n"]) ?? Environment.GetEnvironmentVariable("AA_AGENT_NAME") ?? Environment.MachineName;
+
+        var reconnectDelayMs = parsed.TryGetIntOption(["reconnect-delay"], minValue: 100) ?? 2_000;
+        var reconnectDelayMaxMs = parsed.TryGetIntOption(["reconnect-delay-max"], minValue: reconnectDelayMs) ?? 30_000;
+        var reconnectAttempts = parsed.TryGetIntOption(["reconnect-attempts"], minValue: 1);
+        var heartbeatMs = parsed.TryGetIntOption(["heartbeat"], minValue: 0) ?? 30_000;
+
+        var metadata = ParseMetadata(parsed.GetOptionValues(["metadata", "meta"]));
+
+        var options = new AgentOptions(
+            serverUri,
+            token,
+            name,
+            TimeSpan.FromMilliseconds(reconnectDelayMs),
+            TimeSpan.FromMilliseconds(reconnectDelayMaxMs),
+            reconnectAttempts,
+            TimeSpan.FromMilliseconds(heartbeatMs),
+            metadata);
+
+    await using var runner = new AgentRunner(options);
+        using var shutdownCts = new CancellationTokenSource();
+
+        Console.CancelKeyPress += (_, eventArgs) =>
+        {
+            eventArgs.Cancel = true;
+            shutdownCts.Cancel();
+        };
+
+        try
+        {
+            await runner.RunAsync(shutdownCts.Token).ConfigureAwait(false);
+            return 0;
+        }
+        catch (OperationCanceledException)
+        {
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Agent terminated with error: {ex.Message}");
+            return 1;
+        }
+    }
+
+    private static IReadOnlyDictionary<string, string>? ParseMetadata(IReadOnlyList<string> values)
+    {
+        if (values.Count == 0)
+        {
+            return null;
+        }
+
+        var metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var raw in values)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                continue;
+            }
+
+            var separatorIndex = raw.IndexOf('=');
+            if (separatorIndex <= 0 || separatorIndex == raw.Length - 1)
+            {
+                throw new ArgumentException($"Metadata entry '{raw}' must be in key=value format.");
+            }
+
+            var key = raw[..separatorIndex].Trim();
+            var value = raw[(separatorIndex + 1)..].Trim();
+
+            if (key.Length == 0)
+            {
+                throw new ArgumentException($"Metadata entry '{raw}' contains an empty key.");
+            }
+
+            metadata[key] = value;
+        }
+
+        return metadata.Count == 0 ? null : metadata;
+    }
+
+    private static void PrintAgentUsage()
+    {
+        Console.WriteLine("Usage: accessibilityagent agent [options]");
+        Console.WriteLine("Options:");
+        Console.WriteLine("  --server <url>             Coordinator Socket.IO endpoint (or AA_SERVER_URL)");
+        Console.WriteLine("  --token <value>            Authentication token (or AA_AGENT_TOKEN)");
+        Console.WriteLine("  --name <value>             Agent name override (default machine name)");
+        Console.WriteLine("  --reconnect-delay <ms>     Initial reconnect delay in milliseconds (default 2000)");
+        Console.WriteLine("  --reconnect-delay-max <ms> Maximum reconnect delay in milliseconds (default 30000)");
+        Console.WriteLine("  --reconnect-attempts <n>   Limits reconnect attempts (optional)");
+        Console.WriteLine("  --heartbeat <ms>           Heartbeat interval in milliseconds (default 30000, zero to disable)");
+        Console.WriteLine("  --metadata key=value       Additional metadata (repeatable)");
     }
 }

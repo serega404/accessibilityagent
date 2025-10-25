@@ -278,3 +278,7 @@ $tf/
 
 # Guidance Automation Toolkit
 *.gpState
+
+src/.idea/
+
+src/.vscode/
