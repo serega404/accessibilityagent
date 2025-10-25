@@ -1,3 +1,5 @@
+using System.Buffers;
+using System.Text;
 using System.Text.Json;
 using AccessibilityAgent.Checks;
 using AccessibilityAgent.Cli;
@@ -55,8 +57,9 @@ internal static class ResultWriter
 
     private static void WriteAsJson(IReadOnlyList<CheckResult> results)
     {
-        using var output = Console.OpenStandardOutput();
-        using var writer = new Utf8JsonWriter(output, new JsonWriterOptions { Indented = true });
+        // Пишем JSON в буфер, затем в Console.Out — это поддерживает перенаправление вывода в тестах
+        var buffer = new ArrayBufferWriter<byte>();
+        using var writer = new Utf8JsonWriter(buffer, new JsonWriterOptions { Indented = true });
 
         writer.WriteStartArray();
 
@@ -88,5 +91,8 @@ internal static class ResultWriter
 
         writer.WriteEndArray();
         writer.Flush();
+
+        var json = Encoding.UTF8.GetString(buffer.WrittenSpan);
+        Console.Out.Write(json);
     }
 }
