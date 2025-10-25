@@ -27,19 +27,6 @@ jobs:
         with:
           dotnet-version: '9.0.x'
 
-      - name: Restore NuGet cache (retry)
-        uses: Wandalen/wretry.action@v3
-        with:
-          action: actions/cache/restore@v4
-          with: |
-            path: |
-              ~/.nuget/packages
-            key: nuget-${{ runner.os }}-${{ hashFiles('**/*.sln', '**/*.csproj', '**/packages.lock.json') }}
-            restore-keys: |
-              nuget-${{ runner.os }}-
-          attempt_limit: 3
-          attempt_delay: 15000
-
       - name: Restore dependencies
         run: |
           cd ${{ env.CONTEXT }} &&
@@ -48,20 +35,12 @@ jobs:
       - name: Build
         run: |
           cd ${{ env.CONTEXT }} &&
-          dotnet build AccessibilityAgent.sln --no-restore --configuration Release
+          dotnet build AccessibilityAgent.sln --configuration Release
 
       - name: Run tests
         run: |
           cd ${{ env.CONTEXT }} &&
           dotnet test AccessibilityAgent.sln --no-build --configuration Release --verbosity minimal
-
-      - name: Save NuGet cache
-        if: success()
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.nuget/packages
-          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.sln', '**/*.csproj', '**/packages.lock.json') }}
 
   build-binaries:
     needs: tests
@@ -79,19 +58,6 @@ jobs:
         with:
           dotnet-version: '9.0.x'
 
-      - name: Restore NuGet cache (retry)
-        uses: Wandalen/wretry.action@v3
-        with:
-          action: actions/cache/restore@v4
-          with: |
-            path: |
-              ~/.nuget/packages
-            key: nuget-${{ runner.os }}-${{ hashFiles('**/*.sln', '**/*.csproj', '**/packages.lock.json') }}
-            restore-keys: |
-              nuget-${{ runner.os }}-
-          attempt_limit: 3
-          attempt_delay: 15000
-
       - name: Restore dependencies
         run: |
           cd ${{ env.CONTEXT }} &&
@@ -100,7 +66,7 @@ jobs:
       - name: Build
         run: |
           cd ${{ env.CONTEXT }} &&
-          dotnet build AccessibilityAgent.sln --no-restore --configuration Release
+          dotnet build AccessibilityAgent/AccessibilityAgent.csproj --no-restore --configuration Release -r ${{ matrix.rid }}
 
       - name: Publish ${{ matrix.rid }}
         run: |
@@ -141,19 +107,6 @@ jobs:
         uses: actions/setup-dotnet@v3
         with:
           dotnet-version: '9.0.x'
-
-      - name: Restore NuGet cache (retry)
-        uses: Wandalen/wretry.action@v3
-        with:
-          action: actions/cache/restore@v4
-          with: |
-            path: |
-              ~/.nuget/packages
-            key: nuget-${{ runner.os }}-${{ hashFiles('**/*.sln', '**/*.csproj', '**/packages.lock.json') }}
-            restore-keys: |
-              nuget-${{ runner.os }}-
-          attempt_limit: 3
-          attempt_delay: 15000
 
       - name: Restore dependencies
         run: |
