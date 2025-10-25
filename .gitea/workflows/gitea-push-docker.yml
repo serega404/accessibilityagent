@@ -1,4 +1,4 @@
-name: Create and publish a Docker image
+name: Create binary and publish a Docker image
 
 on:
   push:
@@ -15,7 +15,101 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  tests:
+    runs-on: ubuntu-latest
+    name: Run tests
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.nuget/packages
+            **/obj/project.assets.json
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Restore dependencies
+        run: |
+          cd ${{ env.CONTEXT }} &&
+          dotnet restore AccessibilityAgent.sln
+
+      - name: Build
+        run: |
+          cd ${{ env.CONTEXT }} &&
+          dotnet build AccessibilityAgent.sln --no-restore --configuration Release
+
+      - name: Run tests
+        run: |
+          cd ${{ env.CONTEXT }} &&
+          dotnet test AccessibilityAgent.sln --no-build --configuration Release --verbosity minimal
+
+  build-binaries:
+    needs: tests
+    runs-on: ubuntu-latest
+    name: Build binaries (${{ matrix.rid }})
+    strategy:
+      matrix:
+        rid: [linux-x64, win-x64]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.nuget/packages
+            **/obj/project.assets.json
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Restore dependencies
+        run: |
+          cd ${{ env.CONTEXT }} &&
+          dotnet restore AccessibilityAgent.sln
+
+      - name: Build
+        run: |
+          cd ${{ env.CONTEXT }} &&
+          dotnet build AccessibilityAgent.sln --no-restore --configuration Release
+
+      - name: Publish ${{ matrix.rid }}
+        run: |
+          cd ${{ env.CONTEXT }} &&
+          dotnet publish AccessibilityAgent.sln \
+            --no-restore --configuration Release \
+            -r ${{ matrix.rid }} --self-contained false \
+            -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true \
+            -o "./publish/${{ matrix.rid }}"
+
+      - name: Archive binaries
+        run: |
+          cd ${{ env.CONTEXT }}/publish &&
+          zip -r "../artifact-${{ matrix.rid }}.zip" "${{ matrix.rid }}"
+
+      - name: Upload artifact ${{ matrix.rid }}
+        uses: actions/upload-artifact@v3
+        with:
+          name: accessibilityagent-${{ matrix.rid }}
+          path: ${{ env.CONTEXT }}/artifact-${{ matrix.rid }}.zip
+          if-no-files-found: error
   build-and-push-image:
+    needs: tests
     runs-on: ubuntu-latest
     name: Publish image
     permissions:
@@ -50,11 +144,6 @@ jobs:
         run: |
           cd ${{ env.CONTEXT }} &&
           dotnet build AccessibilityAgent.sln --no-restore --configuration Release
-
-      - name: Run tests
-        run: |
-          cd ${{ env.CONTEXT }} &&
-          dotnet test AccessibilityAgent.sln --no-build --configuration Release --verbosity minimal
 
       - name: Extract metadata (tags, labels) for Docker
         id: meta
