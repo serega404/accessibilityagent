@@ -3,16 +3,21 @@ name: Create and publish a Docker image
 on:
   push:
     branches: ['main', 'staging']
+    paths-ignore:
+      - '**/*.md'
 
 env:
   SERVER_DOMAIN: ${{ vars.SERVER_DOMAIN }}
   CONTEXT: ./src
 
+concurrency:
+  group: ${{ github.workflow || 'workflow' }}-${{ github.ref || gitea.ref || 'ref' }}
+  cancel-in-progress: true
+
 jobs:
   build-and-push-image:
     runs-on: ubuntu-latest
     name: Publish image
-    container: catthehacker/ubuntu:act-latest
     permissions:
       contents: read
       packages: write
@@ -21,15 +26,64 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Extract metadata (tags, labels) for Docker
-        id: meta
-        uses: https://github.com/docker/metadata-action@v4
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v3
         with:
-          images: ${{ vars.SERVER_DOMAIN }}/${{ gitea.repository }}/accessibilitychecker
-      - name: Build an image from Dockerfile
+          dotnet-version: '9.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.nuget/packages
+            **/obj/project.assets.json
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Restore dependencies
         run: |
           cd ${{ env.CONTEXT }} &&
-          docker build -t ${{ steps.meta.outputs.tags }} .
+          dotnet restore AccessibilityAgent.sln
+
+      - name: Build
+        run: |
+          cd ${{ env.CONTEXT }} &&
+          dotnet build AccessibilityAgent.sln --no-restore --configuration Release
+
+      - name: Run tests
+        run: |
+          cd ${{ env.CONTEXT }} &&
+          dotnet test AccessibilityAgent.sln --no-build --configuration Release --verbosity minimal
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ vars.SERVER_DOMAIN }}/${{ gitea.repository }}/accessibilitychecker
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ vars.SERVER_DOMAIN }}
+          username: ${{ secrets.REGISTRY_LOGIN }}
+          password: ${{ secrets.TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ env.CONTEXT }}
+          file: ${{ env.CONTEXT }}/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: false
+          cache-from: type=registry,ref=${{ vars.SERVER_DOMAIN }}/${{ gitea.repository }}/accessibilitychecker:buildcache
+          cache-to: type=registry,ref=${{ vars.SERVER_DOMAIN }}/${{ gitea.repository }}/accessibilitychecker:buildcache,mode=max
       # - name: Run Trivy vulnerability scanner
       #   uses: aquasecurity/trivy-action@0.28.0
       #   with:
@@ -47,12 +101,4 @@ jobs:
       #     exit-code: '1'
       #     exit-level: 'warn'
       #     ignore: 'CIS-DI-0001,CIS-DI-0010,DKL-DI-0006'
-      - name: Log in to the Container registry
-        uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1
-        with:
-          registry: ${{ vars.SERVER_DOMAIN }}
-          username: ${{ secrets.REGISTRY_LOGIN }}
-          password: ${{ secrets.TOKEN }}
-      - name: Push
-        run: |
-          docker push '${{ steps.meta.outputs.tags }}'
+      # Push выполняется в build-push-action выше
