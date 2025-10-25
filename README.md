@@ -58,10 +58,10 @@ dotnet publish AccessibilityAgent/AccessibilityAgent.csproj \
 
 ```bash
 # Сборка образа
-docker build -t accessibilityagent:musl -f Dockerfile .
+docker build -t accessibilityagent:start -f Dockerfile .
 
 # Запуск проверки (пример TCP)
-docker run --rm accessibilityagent:musl tcp google.com --port 443 --timeout 3000
+docker run --rm accessibilityagent:start tcp google.com --port 443 --timeout 3000
 ```
 
 ICMP (ping) внутри контейнера может требовать дополнительные привилегии:
@@ -69,7 +69,7 @@ ICMP (ping) внутри контейнера может требовать до
 ```bash
 # Для использования ICMP echo в контейнере
 # (минимально — NET_RAW; при необходимости добавьте NET_ADMIN)
-docker run --rm --cap-add=NET_RAW --cap-add=NET_ADMIN accessibilityagent:musl ping 8.8.8.8 --timeout 2000
+docker run --rm --cap-add=NET_RAW --cap-add=NET_ADMIN accessibilityagent:start ping 8.8.8.8 --timeout 2000
 ```
 
 Альтернатива для нативного бинаря в хост‑системе Linux:
@@ -310,6 +310,55 @@ accessibilityagent agent \
 - `--reconnect-attempts <n>` — ограничение числа попыток (по умолчанию без лимита)
 - `--heartbeat <ms>` — интервал heartbeat (0 — выключить), по умолчанию 30000
 - `--metadata key=value` — дополнительные метаданные (можно повторять)
+
+### Запуск агента через Docker
+
+Ниже приведены готовые команды для запуска агента в контейнере из образа:
+
+Образ: `git.zetcraft.ru/whales/accessibilityagent/accessibilitychecker:main`
+
+Базовый запуск (переменные окружения):
+
+```bash
+docker run -d --name accessibilityagent \
+  -e AA_SERVER_URL="http://coordinator.example.com:8080" \
+  -e AA_AGENT_TOKEN="<секретный_токен>" \
+  -e AA_AGENT_NAME="agent-1" \
+  --restart unless-stopped \
+  git.zetcraft.ru/whales/accessibilityagent/accessibilitychecker:main \
+  agent
+```
+
+Запуск с флагами CLI (без env):
+
+```bash
+docker run -d --name accessibilityagent \
+  --restart unless-stopped \
+  git.zetcraft.ru/whales/accessibilityagent/accessibilitychecker:main \
+  agent \
+  --server http://coordinator.example.com:8080 \
+  --token <секретный_токен> \
+  --name agent-1 \
+  --heartbeat 30000 \
+  --metadata env=prod --metadata region=ru-msk-1
+```
+
+ICMP (ping) в контейнере требует capability `NET_RAW` (и иногда `NET_ADMIN`). Если пинг не критичен, можно обойтись без дополнительных прав — просто не используйте ping‑проверки. Если пинг нужен:
+
+```bash
+docker run -d --name accessibilityagent \
+  --cap-add=NET_RAW --cap-add=NET_ADMIN \
+  -e AA_SERVER_URL="http://coordinator.example.com:8080" \
+  -e AA_AGENT_TOKEN="<секретный_токен>" \
+  --restart unless-stopped \
+  git.zetcraft.ru/whales/accessibilityagent/accessibilitychecker:main \
+  agent
+```
+
+Полезные приёмы:
+
+- Просмотр логов: `docker logs -f accessibilityagent`
+- Обновление до свежего образа: `docker pull git.zetcraft.ru/whales/accessibilityagent/accessibilitychecker:main && docker restart accessibilityagent`
 
 ### Протокол взаимодействия с координатором
 
