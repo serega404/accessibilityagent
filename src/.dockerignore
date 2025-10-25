@@ -1,0 +1,11 @@
+bin
+obj
+*.user
+*.suo
+*.swp
+*.tmp
+.git
+.gitignore
+.vs
+.vscode
+AccessibilityAgent.Tests/

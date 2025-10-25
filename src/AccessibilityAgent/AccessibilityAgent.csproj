@@ -7,6 +7,10 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <PublishAot>true</PublishAot>
+        <PublishTrimmed>true</PublishTrimmed>
+        <StripSymbols>true</StripSymbols>
+        <PublishSingleFile>true</PublishSingleFile>
+        <SelfContained>true</SelfContained>
         <InvariantGlobalization>true</InvariantGlobalization>
     </PropertyGroup>
 

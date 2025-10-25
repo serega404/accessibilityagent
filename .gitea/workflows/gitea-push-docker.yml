@@ -1,0 +1,58 @@
+name: Create and publish a Docker image
+
+on:
+  push:
+    branches: ['main', 'staging']
+
+env:
+  SERVER_DOMAIN: ${{ vars.SERVER_DOMAIN }}
+  CONTEXT: ./src
+
+jobs:
+  build-and-push-image:
+    runs-on: ubuntu-latest
+    name: Publish image
+    container: catthehacker/ubuntu:act-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: https://github.com/docker/metadata-action@v4
+        with:
+          images: ${{ vars.SERVER_DOMAIN }}/${{ gitea.repository }}/accessibilitychecker
+      - name: Build an image from Dockerfile
+        run: |
+          cd ${{ env.CONTEXT }} &&
+          docker build -t ${{ steps.meta.outputs.tags }} .
+      # - name: Run Trivy vulnerability scanner
+      #   uses: aquasecurity/trivy-action@0.28.0
+      #   with:
+      #     image-ref: '${{ steps.meta.outputs.tags }}'
+      #     format: 'table'
+      #     exit-code: '1'
+      #     ignore-unfixed: true
+      #     vuln-type: 'os,library'
+      #     severity: 'CRITICAL,HIGH'
+      # - name: Run dockle
+      #   uses: goodwithtech/dockle-action@main
+      #   with:
+      #     image: '${{ steps.meta.outputs.tags }}'
+      #     format: 'list'
+      #     exit-code: '1'
+      #     exit-level: 'warn'
+      #     ignore: 'CIS-DI-0001,CIS-DI-0010,DKL-DI-0006'
+      - name: Log in to the Container registry
+        uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1
+        with:
+          registry: ${{ vars.SERVER_DOMAIN }}
+          username: ${{ secrets.REGISTRY_LOGIN }}
+          password: ${{ secrets.TOKEN }}
+      - name: Push
+        run: |
+          docker push '${{ steps.meta.outputs.tags }}'
