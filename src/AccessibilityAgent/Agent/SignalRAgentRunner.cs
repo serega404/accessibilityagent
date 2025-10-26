@@ -16,6 +16,9 @@ internal sealed class SignalRAgentRunner : IAsyncDisposable
     private const string JobResultMethod = "JobResult";
     private const string IssueTokenMethod = "IssueToken";
     private const string JobRequestEvent = "job:request";
+    private const string JobRequestEventAlt1 = "job.request";
+    private const string JobRequestEventAlt2 = "job";
+    private const string JobRequestEventAlt3 = "JobRequest";
 
     private static readonly string[] SupportedCapabilities = new[] { "ping", "dns", "tcp", "udp", "http", "check" };
 
@@ -49,6 +52,18 @@ internal sealed class SignalRAgentRunner : IAsyncDisposable
             .Build();
 
         _hub.On<JsonElement>(JobRequestEvent, async element =>
+        {
+            await OnJobRequestedAsync(element).ConfigureAwait(false);
+        });
+        _hub.On<JsonElement>(JobRequestEventAlt1, async element =>
+        {
+            await OnJobRequestedAsync(element).ConfigureAwait(false);
+        });
+        _hub.On<JsonElement>(JobRequestEventAlt2, async element =>
+        {
+            await OnJobRequestedAsync(element).ConfigureAwait(false);
+        });
+        _hub.On<JsonElement>(JobRequestEventAlt3, async element =>
         {
             await OnJobRequestedAsync(element).ConfigureAwait(false);
         });
@@ -112,10 +127,8 @@ internal sealed class SignalRAgentRunner : IAsyncDisposable
         if (!_options.AutoIssuePersonalToken) return;
         try
         {
-            var resp = await _hub.InvokeAsync<JsonElement>(IssueTokenMethod, new Dictionary<string, object?>
-            {
-                ["agent"] = _options.AgentName
-            });
+            var req = new JsonObject { ["agent"] = _options.AgentName };
+            var resp = await _hub.InvokeAsync<JsonElement>(IssueTokenMethod, req);
             if (resp.ValueKind == JsonValueKind.Object && resp.TryGetProperty("ok", out var ok) && ok.ValueKind == JsonValueKind.True)
             {
                 if (resp.TryGetProperty("token", out var tok) && tok.ValueKind == JsonValueKind.String)
@@ -148,6 +161,7 @@ internal sealed class SignalRAgentRunner : IAsyncDisposable
     private async Task OnJobRequestedAsync(JsonElement element)
     {
         if (_runToken.IsCancellationRequested) return;
+        try { LogInfo($"Job event received: {element.GetRawText()}"); } catch { }
         var job = TryParseJob(element);
         if (job is null) return;
         LogInfo($"Job received: id={job.Id}, type={job.Type}");
@@ -191,7 +205,7 @@ internal sealed class SignalRAgentRunner : IAsyncDisposable
 
     private async Task EmitJobAcceptedAsync(AgentJobRequest job, CancellationToken cancellationToken)
     {
-        var payload = new Dictionary<string, object?>
+        var payload = new JsonObject
         {
             ["jobId"] = job.Id,
             ["agent"] = _options.AgentName,
@@ -204,8 +218,8 @@ internal sealed class SignalRAgentRunner : IAsyncDisposable
 
     private async Task EmitJobResultAsync(AgentJobRequest job, AgentJobExecutionResult result)
     {
-        var checksPayload = result.Checks.Select(PrepareCheckPayload).ToArray();
-        var payload = new Dictionary<string, object?>
+        var checksArray = new JsonArray(result.Checks.Select(PrepareCheckPayload).ToArray());
+        var payload = new JsonObject
         {
             ["jobId"] = result.JobId,
             ["agent"] = _options.AgentName,
@@ -213,7 +227,7 @@ internal sealed class SignalRAgentRunner : IAsyncDisposable
             ["error"] = result.Error,
             ["errorDetails"] = result.ErrorDetails,
             ["completedAt"] = DateTimeOffset.UtcNow,
-            ["checks"] = checksPayload,
+            ["checks"] = checksArray,
             ["metadata"] = job.Metadata
         };
         await SafeInvokeAsync(JobResultMethod, payload, CancellationToken.None).ConfigureAwait(false);
@@ -221,19 +235,26 @@ internal sealed class SignalRAgentRunner : IAsyncDisposable
 
     private async Task SendRegistrationAsync()
     {
-        var payload = new Dictionary<string, object?>
+        var caps = new JsonArray(SupportedCapabilities.Select(c => (JsonNode?)c).ToArray());
+        JsonObject? meta = null;
+        if (_options.Metadata.Count > 0)
+        {
+            meta = new JsonObject(_options.Metadata.ToDictionary(kv => kv.Key, kv => (JsonNode?)kv.Value));
+        }
+        var runtime = new JsonObject
+        {
+            ["framework"] = RuntimeInformation.FrameworkDescription,
+            ["processArchitecture"] = RuntimeInformation.ProcessArchitecture.ToString(),
+            ["startedAt"] = _startedAt
+        };
+        var payload = new JsonObject
         {
             ["agent"] = _options.AgentName,
             ["version"] = _agentVersion,
-            ["capabilities"] = SupportedCapabilities,
+            ["capabilities"] = caps,
             ["connectedAt"] = DateTimeOffset.UtcNow,
-            ["metadata"] = _options.Metadata.Count == 0 ? null : _options.Metadata,
-            ["runtime"] = new Dictionary<string, object?>
-            {
-                ["framework"] = RuntimeInformation.FrameworkDescription,
-                ["processArchitecture"] = RuntimeInformation.ProcessArchitecture.ToString(),
-                ["startedAt"] = _startedAt
-            }
+            ["metadata"] = meta,
+            ["runtime"] = runtime
         };
         await SafeInvokeAsync(AgentRegisterMethod, payload, CancellationToken.None).ConfigureAwait(false);
     }
@@ -307,14 +328,22 @@ internal sealed class SignalRAgentRunner : IAsyncDisposable
         }
     }
 
-    private static Dictionary<string, object?> PrepareCheckPayload(CheckResult result) => new()
+    private static JsonObject PrepareCheckPayload(CheckResult result)
     {
-        ["check"] = result.Check,
-        ["success"] = result.Success,
-        ["message"] = result.Message,
-        ["durationMs"] = result.DurationMs,
-        ["data"] = result.Data
-    };
+        JsonObject? data = null;
+        if (result.Data is { Count: > 0 })
+        {
+            data = new JsonObject(result.Data.ToDictionary(kv => kv.Key, kv => (JsonNode?)kv.Value));
+        }
+        return new JsonObject
+        {
+            ["check"] = result.Check,
+            ["success"] = result.Success,
+            ["message"] = result.Message,
+            ["durationMs"] = result.DurationMs,
+            ["data"] = data
+        };
+    }
 
     private static string? ExtractString(JsonObject obj, params string[] propertyNames)
     {
