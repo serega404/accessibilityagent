@@ -446,7 +446,7 @@ internal static class CommandDispatcher
             credentialFilePath: credentialPath,
             autoIssuePersonalToken: !parsed.HasFlag(["no-auto-issue"])) ;
 
-    await using var runner = new AgentRunner(options);
+    await using var runner = new SignalRAgentRunner(options);
         using var shutdownCts = new CancellationTokenSource();
 
         Console.CancelKeyPress += (_, eventArgs) =>
@@ -511,7 +511,7 @@ internal static class CommandDispatcher
     {
         Console.WriteLine("Usage: accessibilityagent agent [options]");
         Console.WriteLine("Options:");
-        Console.WriteLine("  --server <url>             Coordinator Socket.IO endpoint (or AA_SERVER_URL)");
+    Console.WriteLine("  --server <url>             Coordinator endpoint (or AA_SERVER_URL)");
         Console.WriteLine("  --token <value>            Authentication token (or AA_AGENT_TOKEN)");
         Console.WriteLine("  --name <value>             Agent name override (default machine name)");
         Console.WriteLine("  --reconnect-delay <ms>     Initial reconnect delay in milliseconds (default 2000)");
