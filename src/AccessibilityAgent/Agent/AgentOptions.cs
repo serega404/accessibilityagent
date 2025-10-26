@@ -31,7 +31,9 @@ internal sealed class AgentOptions
         TimeSpan reconnectDelayMax,
         int? maxReconnectAttempts,
         TimeSpan heartbeatInterval,
-        IReadOnlyDictionary<string, string>? metadata)
+        IReadOnlyDictionary<string, string>? metadata,
+        string? credentialFilePath = null,
+        bool autoIssuePersonalToken = true)
     {
         if (serverUri is null)
         {
@@ -67,6 +69,11 @@ internal sealed class AgentOptions
         Metadata = metadata is null || metadata.Count == 0
             ? new ReadOnlyDictionary<string, string>(new Dictionary<string, string>())
             : new ReadOnlyDictionary<string, string>(new Dictionary<string, string>(metadata, StringComparer.Ordinal));
+
+        CredentialFilePath = string.IsNullOrWhiteSpace(credentialFilePath)
+            ? AgentCredentialStore.GetDefaultPath()
+            : credentialFilePath!;
+        AutoIssuePersonalToken = autoIssuePersonalToken;
     }
 
     /// <summary>
@@ -112,4 +119,14 @@ internal sealed class AgentOptions
     /// ключи сравниваются с учётом регистра (Ordinal).
     /// </summary>
     public IReadOnlyDictionary<string, string> Metadata { get; }
+
+    /// <summary>
+    /// Путь к файлу, где хранятся креды агента (персональный токен, метаданные).
+    /// </summary>
+    public string CredentialFilePath { get; }
+
+    /// <summary>
+    /// При первом подключении запросить у сервера персональный токен и сохранить его.
+    /// </summary>
+    public bool AutoIssuePersonalToken { get; }
 }

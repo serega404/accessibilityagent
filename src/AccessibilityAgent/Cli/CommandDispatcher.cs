@@ -411,13 +411,17 @@ internal static class CommandDispatcher
             throw new ArgumentException($"Invalid server URL '{serverUrl}'.");
         }
 
-        var token = parsed.GetOption(["token", "t"]) ?? Environment.GetEnvironmentVariable("AA_AGENT_TOKEN");
+        var credentialPath = parsed.GetOption(["creds", "credentials", "credential-file"]) ?? Environment.GetEnvironmentVariable("AA_AGENT_CREDENTIAL_FILE") ?? Agent.AgentCredentialStore.GetDefaultPath();
+        // Попытка прочитать сохранённый персональный токен
+        var saved = Agent.AgentCredentialStore.Load(credentialPath);
+        var token = parsed.GetOption(["token", "t"]) ?? Environment.GetEnvironmentVariable("AA_AGENT_TOKEN") ?? saved?.Token;
+        // Если нет ни мастер-токена, ни сохранённого, потребуем хотя бы мастер-токен для первичной инициализации
         if (string.IsNullOrWhiteSpace(token))
         {
-            throw new ArgumentException("Agent mode requires --token option or AA_AGENT_TOKEN environment variable.");
+            throw new ArgumentException("Agent mode requires --token (master or personal) or AA_AGENT_TOKEN, or existing credentials file.");
         }
 
-        var name = parsed.GetOption(["name", "n"]) ?? Environment.GetEnvironmentVariable("AA_AGENT_NAME") ?? Environment.MachineName;
+    var name = parsed.GetOption(["name", "n"]) ?? Environment.GetEnvironmentVariable("AA_AGENT_NAME") ?? saved?.AgentName ?? Environment.MachineName;
 
         var reconnectDelayMs = parsed.TryGetIntOption(["reconnect-delay"], minValue: 100) ?? 2_000;
         var reconnectDelayMaxMs = parsed.TryGetIntOption(["reconnect-delay-max"], minValue: reconnectDelayMs) ?? 30_000;
@@ -425,6 +429,10 @@ internal static class CommandDispatcher
         var heartbeatMs = parsed.TryGetIntOption(["heartbeat"], minValue: 0) ?? 30_000;
 
         var metadata = ParseMetadata(parsed.GetOptionValues(["metadata", "meta"]));
+        if (metadata is null && saved?.Metadata is { Count: > 0 })
+        {
+            metadata = saved!.Metadata!;
+        }
 
         var options = new AgentOptions(
             serverUri,
@@ -434,7 +442,9 @@ internal static class CommandDispatcher
             TimeSpan.FromMilliseconds(reconnectDelayMaxMs),
             reconnectAttempts,
             TimeSpan.FromMilliseconds(heartbeatMs),
-            metadata);
+            metadata,
+            credentialFilePath: credentialPath,
+            autoIssuePersonalToken: !parsed.HasFlag(["no-auto-issue"])) ;
 
     await using var runner = new AgentRunner(options);
         using var shutdownCts = new CancellationTokenSource();
@@ -509,5 +519,7 @@ internal static class CommandDispatcher
         Console.WriteLine("  --reconnect-attempts <n>   Limits reconnect attempts (optional)");
         Console.WriteLine("  --heartbeat <ms>           Heartbeat interval in milliseconds (default 30000, zero to disable)");
         Console.WriteLine("  --metadata key=value       Additional metadata (repeatable)");
+        Console.WriteLine("  --credentials <path>       Path to credentials file (default ~/.config/accessibilityagent/agent.json)");
+        Console.WriteLine("  --no-auto-issue            Do not request personal token automatically on first run");
     }
 }

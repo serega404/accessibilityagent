@@ -62,7 +62,7 @@ internal sealed class AgentRunner : IAsyncDisposable
             socketOptions.ReconnectionAttempts = options.MaxReconnectAttempts.Value;
         }
 
-        // Для Socket.IO v4 передаем и в query, и в auth для совместимости с сервером
+        // Для Socket.IO v4 передаем и в query для совместимости с сервером
         socketOptions.Query = new List<KeyValuePair<string, string>>
         {
             new("token", options.Token),
@@ -223,7 +223,77 @@ internal sealed class AgentRunner : IAsyncDisposable
     private async Task OnConnectedAsync()
     {
         LogInfo("Socket connected.");
+        await TryIssuePersonalTokenIfNeededAsync().ConfigureAwait(false);
         await SendRegistrationAsync().ConfigureAwait(false);
+    }
+
+    private async Task TryIssuePersonalTokenIfNeededAsync()
+    {
+        if (!_options.AutoIssuePersonalToken)
+        {
+            return;
+        }
+
+        try
+        {
+            // Запрашиваем персональный токен у сервера; сервер вернет тот же токен, если уже был выдан
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            string? issuedToken = null;
+
+            await _socket.EmitAsync("auth:issue", response =>
+            {
+                try
+                {
+                    var element = response.GetValue<JsonElement>(0);
+                    if (element.ValueKind == JsonValueKind.Object)
+                    {
+                        if (element.TryGetProperty("ok", out var okProp) && okProp.ValueKind == JsonValueKind.True)
+                        {
+                            if (element.TryGetProperty("token", out var tokenProp) && tokenProp.ValueKind == JsonValueKind.String)
+                            {
+                                issuedToken = tokenProp.GetString();
+                            }
+                        }
+                    }
+                }
+                catch
+                {
+                    // ignore parse errors
+                }
+            }, cts.Token, new Dictionary<string, object?>
+            {
+                ["agent"] = _options.AgentName
+            }).ConfigureAwait(false);
+
+            if (!string.IsNullOrWhiteSpace(issuedToken) && !string.Equals(issuedToken, _options.Token, StringComparison.Ordinal))
+            {
+                // Сохраним новые креды на диск; используем их при следующих запусках
+                var creds = new AgentCredentials
+                {
+                    AgentName = _options.AgentName,
+                    ServerUrl = _options.ServerUri.ToString(),
+                    Token = issuedToken,
+                    IssuedAt = DateTimeOffset.UtcNow,
+                    Metadata = _options.Metadata.ToDictionary(kv => kv.Key, kv => kv.Value)
+                };
+                if (AgentCredentialStore.Save(_options.CredentialFilePath, creds))
+                {
+                    LogInfo($"Personal token saved to '{_options.CredentialFilePath}'. It will be used on next start.");
+                }
+                else
+                {
+                    LogWarning($"Failed to save credentials to '{_options.CredentialFilePath}'.");
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // timeout issuing token is fine, continue
+        }
+        catch (Exception ex)
+        {
+            LogWarning($"Issuing personal token failed: {ex.Message}");
+        }
     }
 
     private void OnError(string error)
